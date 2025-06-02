@@ -1,0 +1,3 @@
+venvwsl/
+__pycache__/
+*.pyc
