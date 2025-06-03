@@ -1,67 +1,91 @@
-from dash import Dash, html, dcc
-import plotly.express as px
-import pandas as pd
+import os
 import json
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from dash import Dash, html, dcc, Input, Output
+import dash_bootstrap_components as dbc
 
-# ========== LEITURA DO JSON ==========
+# Criação do app
+app = Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
+
+# Leitura do JSON
 with open(r'C:\Users\mathe\Desktop\Estágio\dash_intro\12h03m42s.json', 'r') as f:
     json_data = json.load(f)
 
-sensor_data = json_data['eventFiles']["20160008"]
-peak_data = sensor_data["dfFft"]["peak"]
+# Processamento dos dados
+event_files = json_data["eventFiles"]
+cf_list = []
 
-
-colors = {
-    'background': '#111111',
-    'text': '#111111'
-}
-
-# ========== TRANSFORMAÇÃO EM DATAFRAME ==========
-dados = []
-
-for canal in peak_data:
-    nome_canal = canal["chName"]
-    for ponto in canal["value"]:
-        dados.append({
-            "Canal": nome_canal,
-            "Frequência": ponto["freq"],
-            "Amplitude": ponto["ampl"]
+for event_id, event_data in event_files.items():
+    cf_items = event_data.get("df", {}).get("cf", [])
+    for item in cf_items:
+        cf_list.append({
+            "eventId": event_id,
+            "chName": item["chName"],
+            "peak": item["peak"],
+            "rms": item["rms"],
+            "value": item["value"]
         })
 
-df_peak = pd.DataFrame(dados)
+df_cf = pd.DataFrame(cf_list)
 
-# ========== SEPARA OS GRÁFICOS POR CANAL ==========
-graficos = []
+# Layout do app
+app.layout = dbc.Container([
+    html.H1('Análise de Eventos', className='text-center mb-4'),
+    
+    html.H5('Gráficos de linha dos picos de frequência por canal (T, R, V)', 
+            className='text-center mb-4'),
 
-for canal in df_peak["Canal"].unique():
-    df_canal = df_peak[df_peak["Canal"] == canal]
-    fig = px.line(
-        df_canal,
-        x="Frequência",
-        y="Amplitude",
-        markers=True,
-        title=f"Picos de Frequência - Canal {canal}"
-    )
-    fig.update_layout(
-        xaxis_title="Frequência (Hz)",
-        yaxis_title="Amplitude",
-        legend_title="Canal"
-    )
-    graficos.append(dcc.Graph(figure=fig))
+    dbc.Tabs([
+        dbc.Tab(label="Componente T", tab_id='T'),
+        dbc.Tab(label="Componente R", tab_id='R'),
+        dbc.Tab(label="Componente V", tab_id='V'),
+    ], id='tabs', active_tab='T', className='mb-4'),
 
-# ========== DASH APP ==========
-app = Dash()
+    dcc.Graph(id='grafico_metricas'),
 
-app.layout = html.Div(
-    children=[
-        html.H1(children='Análise de Picos de Frequência', style={'textAlign': 'center', 'color': colors['text']}),
-        html.Div(
-            children='Gráficos de linha dos picos de frequência por canal (T, R, V)',
-            style={'textAlign': 'center', 'color': colors['text']}  # Corrigido aqui
-        ),
-        *graficos
-    ]
+    html.Hr(),
+
+    html.Div(id='estatisticas', className='text-center mt-4')
+], fluid=True)
+
+# Callback para atualizar os gráficos
+@app.callback(
+    Output('grafico_metricas', 'figure'),
+    Input('tabs', 'active_tab')
 )
+def update_graph(active_tab):
+    df_filtrado = df_cf[df_cf['chName'] == active_tab]
 
-if __name__ == '__main__':
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=("Pico", "RMS", "Fator")
+    )
+
+    fig.add_trace(go.Scatter(
+        x=df_filtrado['eventId'], y=df_filtrado['peak'],
+        mode='lines+markers', name='Pico'), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df_filtrado['eventId'], y=df_filtrado['rms'],
+        mode='lines+markers', name='RMS'), row=2, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df_filtrado['eventId'], y=df_filtrado['value'],
+        mode='lines+markers', name='Fator'), row=3, col=1)
+
+    fig.update_layout(
+        height=800,
+        title_text=f"Métricas - Componente {active_tab}",
+        showlegend=False,
+        margin=dict(t=50, b=50, l=50, r=50)
+    )
+
+    return fig
+
+if __name__ == "__main__":
     app.run(debug=True)
